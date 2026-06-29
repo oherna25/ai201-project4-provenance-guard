@@ -421,4 +421,4 @@ python-dotenv>=1.0.0
 
 i decided to do an analytics dashboard.
 i updated app.py to compute analytics and a gui using html that renders the charts and data. each metric gets it own chart. 
-it grabs data from the log to show
+it grabs data from the log to show number of occurences per each possible outcome ( AI , uncertain , human) also shows data from past runs
