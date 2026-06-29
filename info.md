@@ -93,7 +93,7 @@ Stylometric heuristics: measurable statistical properties that differ between hu
 These two signals are genuinely independent: one is semantic, one is structural. That makes the combination more informative than either alone.
 
 
-# Milestone 1: 
+# Milestone 1: Understand the System and Define Your Architecture
 
 Read the required features list in full. Then write, in plain English, the path a single piece of text takes from submission to the label a user sees. Name every system component it touches and what each one does. This is your architecture narrative — you'll use it in your planning.md and README.
 
@@ -108,3 +108,207 @@ Sketch (on paper or in a text file) your API surface: what endpoints do you need
 
 
 Turn your architecture narrative into a diagram. Draw the two main flows: (1) submission flow — POST /submit → signal 1 → signal 2 → confidence scoring → transparency label → audit log → response; (2) appeal flow — POST /appeal → status update → audit log → response. Label each arrow with what passes between components (raw text, signal score, combined score, label text). You'll include this diagram in your planning.md and use it as context when prompting AI tools to generate code.
+
+# Milestone 2: Write Your Spec Before Any Code
+
+Create planning.md in your repo root. Design the structure yourself. At minimum, your document must address these five questions with specific, implementation-ready answers:
+
+Detection signals: What are your 2+ signals? What does each one measure? What does each signal's output look like (a score between 0–1? a binary flag?), and how will you combine them into a single confidence score?
+Uncertainty representation: What does a confidence score of 0.6 mean to your system? How will you map raw signal outputs to a calibrated score? What threshold separates "likely AI" from "uncertain" from "likely human"?
+Transparency label design: What exact text will the label show for a high-confidence AI result? A high-confidence human result? An uncertain result? Write out the three label variants now, before you build the UI.
+Appeals workflow: Who can submit an appeal? What information do they provide? What does the system do when an appeal is received — what status changes, what gets logged? What would a human reviewer see when they open the appeal queue?
+Anticipated edge cases: What types of content will your system handle poorly? Name at least two specific scenarios — not generic risks like "inaccurate detection," but specific cases like "a poem with heavy use of repetition and simple vocabulary that your heuristics might score as AI-generated."
+
+Add an ## Architecture section to your planning.md. Include the diagram you drew in Milestone 1 (ASCII art is fine) and a 2–3 sentence narrative describing the submission and appeal flows. This section travels with you into Milestones 3–5 as the reference diagram for AI code generation.
+
+
+Add an ## AI Tool Plan section to your planning.md. For each of the three implementation milestones, specify:
+
+M3 (submission endpoint + first signal): Which spec sections you'll provide to the AI tool (hint: your detection signals section + the diagram), what you'll ask it to generate (Flask app skeleton + the first signal function), and how you'll verify the output (test with a few inputs directly before wiring into the endpoint).
+M4 (second signal + confidence scoring): Which spec sections you'll provide (detection signals + uncertainty representation + diagram), what you'll ask for (second signal function + scoring logic), and what you'll check (do scores vary meaningfully between clearly AI and clearly human text?).
+M5 (production layer): Which spec sections you'll provide (label variants + appeals workflow + diagram), what you'll ask for (label generation logic + the /appeal endpoint), and how you'll verify (test all three label variants are reachable and that an appeal updates status correctly).
+
+Review your label variants. Revise if needed before you start building.
+
+
+Update planning.md before starting any stretch features.
+
+
+# Milestone 3: Build the Submission Endpoint and First Detection Signal
+
+Build your Flask app, implement the submission endpoint, and get your first detection signal working end-to-end. Don't build all the features at once! Get one signal producing a result you can inspect before adding the second. A single working signal is easier to debug than two broken ones.
+
+New to Flask? Start with the Flask Quickstart — a 20-minute primer covering a minimal POST/GET app, jsonify, Flask-Limiter setup, and a simple log helper.
+
+
+Before writing any code, use your planning.md + architecture diagram to prompt an AI tool. Give it your detection signals section and the diagram and ask it to generate: (1) the Flask app skeleton with the POST /submit route stub, and (2) the first signal function. Review the output carefully — check that the function signature matches your spec's description of what the signal returns (a score? a binary flag?), and that the Flask route structure matches your API contract. Edit before using; don't paste blindly.
+
+
+Set up your Flask app. Create a POST /submit endpoint that accepts a JSON body with at minimum a text field and a creator_id field. For now, have it return a hardcoded response so you can verify the route works before adding any logic.
+
+
+Implement your first detection signal. If you're using Groq as your first signal, write a function that sends the text to the API with a prompt that returns a structured assessment. Test it independently before wiring it into the endpoint — call the function directly with a few test inputs and inspect the output.
+
+
+Wire the first signal into the submission endpoint. The endpoint should now return a response with at least: a content_id (a unique ID for this submission), the attribution result from signal 1, a placeholder confidence score, and a placeholder label. The content_id is essential — the appeal endpoint needs it, and it should appear in your /submit response and audit log.
+
+Test with a curl command:
+
+curl -s -X POST http://localhost:5000/submit \
+  -H "Content-Type: application/json" \
+  -d '{"text": "The sun dipped below the horizon, painting the sky in hues of amber and rose. I sat on the porch, coffee in hand, watching the neighborhood slowly go quiet.", "creator_id": "test-user-1"}' | python -m json.tool
+You should see a JSON response with content_id, attribution, confidence, and label fields. Save the content_id — you'll use it to test appeals in Milestone 5.
+
+
+Set up your audit log. Before moving on, every call to the submission endpoint should write a structured entry to the log — timestamp, content ID, attribution result, signal 1 score. You'll extend the log in Milestone 4; start simple and make it structured (JSON or SQLite, not print() statements). A well-structured entry looks like this:
+
+{
+  "content_id": "3f7a2b1e-...",
+  "creator_id": "test-user-1",
+  "timestamp": "2025-04-01T14:32:10.123Z",
+  "attribution": "likely_ai",
+  "confidence": 0.78,
+  "llm_score": 0.81,
+  "status": "classified"
+}
+
+Add a GET /log endpoint that returns the most recent audit log entries as JSON. The project requires showing the audit log with at least 3 structured entries — without a /log endpoint (or equivalent), you'll have no clean way to surface this in your README. Keep it simple: return jsonify({"entries": get_log()}). In a real system this would require auth; here it's for documentation and grading visibility.
+
+📍 Checkpoint
+
+Your Flask app runs. POST /submit returns a JSON response including content_id, attribution result, and a placeholder confidence score. Each submission writes a structured entry to the audit log. GET /log returns those entries as JSON. You can inspect the log and see your test submissions.
+
+# Milestone 4: Add the Second Signal and Implement Confidence Scoring
+
+Add your second detection signal and implement real confidence scoring. This milestone is where your detection pipeline becomes multi-signal. The key engineering challenge is combining two signals — each with its own output format and reliability profile — into a single, calibrated confidence score.
+
+
+Use your detection signals section + uncertainty representation section + architecture diagram to prompt an AI tool. Ask it to generate: (1) the second signal function, and (2) the confidence scoring logic that combines both signals according to your spec. Verify that the generated scoring function actually matches the thresholds you defined in your planning document — AI tools sometimes implement reasonable-looking scoring that silently diverges from your specified ranges. If it does, correct it before wiring it in.
+
+
+Implement your second detection signal as a standalone function, tested independently before integration. If you're using stylometric heuristics, compute 2–3 specific metrics (e.g., sentence length variance, type-token ratio) and decide how to combine them into a single signal score. Test it on the same inputs you used for signal 1 — do the two signals agree? Disagree? Understanding where they diverge tells you something about each signal's strengths.
+
+
+Implement your confidence scoring logic. Both signals now produce a score — combine them according to your planning.md spec. Your combined score should: vary meaningfully across clearly different inputs (a highly polished, uniform paragraph vs. a casual, irregular piece should produce different scores), and map to at least 3 distinct label categories (e.g., "Likely AI-generated," "Uncertain," "Likely human-written").
+
+
+Test your scoring with at least 4 deliberately chosen inputs: something you're confident is AI-generated, something you're confident is human-written, and two borderline cases. Do the scores match your intuition? If not, investigate why before moving on — a miscalibrated scoring function will undermine everything built on top of it.
+
+If you need test inputs, here's a starting set:
+
+## Clearly AI-generated (should score high)
+"Artificial intelligence represents a transformative paradigm shift in modern society. 
+It is important to note that while the benefits of AI are numerous, it is equally 
+essential to consider the ethical implications. Furthermore, stakeholders across 
+various sectors must collaborate to ensure responsible deployment."
+
+## Clearly human-written (should score low)
+"ok so i finally tried that new ramen place downtown and honestly? 
+underwhelming. the broth was fine but they put WAY too much sodium in it and 
+i was thirsty for like three hours after. my friend got the spicy version and 
+said it was better. probably won't go back unless someone drags me there"
+
+## Borderline: formal human writing (may score mid-high on stylometrics)
+"The relationship between monetary policy and asset price inflation has been 
+extensively studied in the literature. Central banks face a fundamental tension 
+between their mandate for price stability and the unintended consequences of 
+prolonged low interest rates on equity and real estate valuations."
+
+## Borderline: lightly edited AI output (should ideally score mid-range)
+"I've been thinking a lot about remote work lately. There are genuine tradeoffs — 
+flexibility and no commute on one side, isolation and blurred work-life boundaries 
+on the other. Studies show productivity varies widely by individual and role type."
+If any of these produce scores that don't match your intuition, print both signal scores separately to find which one is misbehaving.
+
+
+Update your audit log to capture both signals' individual scores alongside the combined confidence score.
+
+📍 Checkpoint
+
+Both detection signals are running and their outputs are combined into a single confidence score. Submitting clearly AI-generated text produces a noticeably different score than clearly human-written text. The audit log now records individual signal scores and the combined result. You have tested at least 4 inputs spanning the confidence range.
+
+# Milestone 5: Implement the Production Layer
+
+dd the four production features that turn your detection pipeline into a real system: the transparency label, the appeals workflow, rate limiting, and a complete audit log. These features are independent enough to build in any order — but the transparency label and appeals workflow both depend on the confidence scoring from Milestone 4, so verify that first.
+
+
+Use your transparency label variants and appeals workflow sections from planning.md + the architecture diagram to prompt an AI tool. Ask it to generate: (1) a label generation function that maps confidence scores to the correct label text, and (2) the POST /appeal endpoint. Verify the label function against your spec's thresholds — ask it to produce all three variants and confirm the text matches what you wrote. For the appeal endpoint, check that it updates status and logs correctly before considering it done.
+
+
+Transparency label: Implement the three label variants you designed in planning.md. The label returned by the submission endpoint must change based on the confidence score — it should not be the same text regardless of score. Test that all three variants are reachable by submitting inputs that produce different confidence levels.
+
+
+Appeals workflow: Build a POST /appeal endpoint that accepts a content_id and creator_reasoning field. The endpoint should: update the content's status to "under review" in whatever storage you're using, log the appeal alongside the original classification decision in the audit log, and return a confirmation that the appeal was received. You do not need to implement automated re-classification.
+
+To test, use the content_id from any earlier /submit response:
+
+curl -s -X POST http://localhost:5000/appeal \
+  -H "Content-Type: application/json" \
+  -d '{"content_id": "PASTE-CONTENT-ID-HERE", "creator_reasoning": "I wrote this myself from personal experience. I am a non-native English speaker and my writing style may appear more formal than typical."}' | python -m json.tool
+Then verify the appeal is in the log with GET /log — the entry should show "status": "under_review" and the appeal_reasoning field populated.
+
+
+Rate limiting: Apply Flask-Limiter to your submission endpoint. Choose limits that reflect realistic usage (a writer submitting their own work) while preventing abuse (a script flooding the system). Document your chosen limits and reasoning in your README — the numbers should be defensible, not arbitrary.
+
+⚙️ Flask-Limiter setup note: Flask-Limiter ≥ 3.x requires a storage_uri parameter. The simplest setup for local development uses in-memory storage:
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=[],
+    storage_uri="memory://",
+)
+Apply the limit to your submit route:
+
+@app.route("/submit", methods=["POST"])
+@limiter.limit("10 per minute;100 per day")
+def submit():
+    ...
+Without storage_uri="memory://" you may see a warning or error on startup.
+
+To test that rate limiting is working, run this in a new terminal window while your Flask server is running (it sends 12 rapid requests — more than the 10/minute limit):
+
+for i in $(seq 1 12); do
+  curl -s -o /dev/null -w "%{http_code}\n" -X POST http://localhost:5000/submit \
+    -H "Content-Type: application/json" \
+    -d '{"text": "This is a test submission for rate limit testing purposes only.", "creator_id": "ratelimit-test"}'
+done
+You should see 200 responses for the first 10 and 429 responses after. Capture those 429 responses in your README (paste the status-code output) — that's the evidence graders need.
+
+
+Complete audit log: Verify that your log now captures everything required: timestamp, content ID, attribution result, confidence score, both individual signal scores, and whether an appeal has been filed. Check that the format is structured — JSON or a formatted log file, not unformatted console output. Generate at least 3 entries so you have something to document in your README.
+
+📍 Checkpoint
+
+All four production features are working: the transparency label varies by confidence level, appeals can be submitted and are reflected in the audit log, rate limiting triggers when the limit is exceeded, and the audit log has at least 3 structured entries covering submissions and at least one appeal. All of these work end-to-end without workarounds.
+
+# Milestone 6: Document and Walk Through Your Work
+
+Write your README, then record a short portfolio walkthrough of your project. Your README is the canonical record of your work — it needs to explain your architecture and design decisions, not just list the features.
+
+
+Write your README covering all required sections from the submission checklist. The detection signal and confidence scoring sections should explain your reasoning, not just your implementation — why these signals, why this scoring approach, what you'd change if you were deploying this for real.
+
+
+In the confidence-scoring section, include two example submissions with noticeably different confidence scores — one high-confidence and one lower-confidence case — showing the actual scores (you can lift these from your Milestone 4 testing). This is what shows your scoring produces meaningful variation, not a constant.
+
+
+Include a typed description of all three variants (high-confidence AI, high-confidence human, uncertain) — write out the exact text each one displays. You're welcome to include a screenshot or mockup as well, but the written description is what's required.
+
+
+Write the known limitations section honestly. Name at least one specific type of content your system would likely get wrong and explain why — tied to a property of your signals, not a generic "it needs more data."
+
+
+Write your spec reflection in the README: describe one way the spec helped guide your implementation and one way your implementation diverged from it and why.
+
+
+Add the AI usage section. Describe at least 2 specific instances: what you directed the AI to do, what it produced, and what you revised or overrode.
+
+
+Record a short portfolio walkthrough (a couple of minutes) of your project. Briefly show your system working end-to-end and talk through a few of your design decisions. Keep it short and unpolished — it's a great portfolio piece and good practice explaining your work to others. The detailed evidence (audit-log sample, rate-limit behavior, label variants, appeal handling) lives in your README; the walkthrough is just you giving a quick tour.
+
+📍 Checkpoint
+
+README covers all required sections with substantive explanations of design decisions, not just feature descriptions. All three transparency label variants are written out. You've recorded a short portfolio walkthrough giving a quick tour of your system.

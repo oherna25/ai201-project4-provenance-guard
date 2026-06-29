@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Provenance Guard — Detection Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* ── tokens ── */
+  :root {
+    --bg:           #0f1117;
+    --surface:      #181c24;
+    --surface-2:    #1e2330;
+    --border:       #2a3045;
+    --text:         #e8e6e0;
+    --text-muted:   #8a8f9e;
+    --text-dim:     #4a5068;
+
+    --ai:           #f5a623;
+    --ai-dim:       rgba(245,166,35,0.12);
+    --ai-mid:       rgba(245,166,35,0.35);
+    --human:        #7eb89a;
+    --human-dim:    rgba(126,184,154,0.12);
+    --human-mid:    rgba(126,184,154,0.35);
+    --uncertain:    #6b8cae;
+    --uncertain-dim:rgba(107,140,174,0.12);
+    --uncertain-mid:rgba(107,140,174,0.35);
+
+    --mono: 'JetBrains Mono', monospace;
+    --sans: 'Inter', sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  /* ── layout ── */
+  header {
+    padding: 28px 40px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+  }
+  header h1 {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  header .wordmark {
+    font-family: var(--mono);
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.02em;
+  }
+  header .status-pill {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 2px;
+    background: var(--surface-2);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+  }
+  header .status-pill.live { color: var(--human); border-color: var(--human); }
+
+  main {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 36px 40px 80px;
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+  }
+
+  /* ── stat row ── */
+  .stat-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+  }
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 20px 22px 18px;
+    border-radius: 4px;
+    position: relative;
+    overflow: hidden;
+  }
+  .stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+  }
+  .stat-card.ai::before    { background: var(--ai); }
+  .stat-card.human::before { background: var(--human); }
+  .stat-card.uncertain::before { background: var(--uncertain); }
+  .stat-card.neutral::before { background: var(--border); }
+
+  .stat-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+  }
+  .stat-number {
+    font-family: var(--mono);
+    font-size: 36px;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: -0.03em;
+  }
+  .stat-card.ai .stat-number    { color: var(--ai); }
+  .stat-card.human .stat-number { color: var(--human); }
+  .stat-card.uncertain .stat-number { color: var(--uncertain); }
+  .stat-card.neutral .stat-number { color: var(--text); }
+
+  .stat-sub {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 6px;
+  }
+
+  /* ── section ── */
+  .section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .section-header {
+    padding: 16px 22px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+  .section-title {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .section-meta {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-left: auto;
+  }
+  .section-body { padding: 24px 22px; }
+
+  /* ── distribution strip (signature element) ── */
+  #strip-canvas {
+    width: 100%;
+    height: 100px;
+    display: block;
+    cursor: crosshair;
+  }
+  .strip-axis {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    margin-top: 8px;
+    padding: 0 2px;
+  }
+  .strip-legend {
+    display: flex;
+    gap: 20px;
+    margin-top: 14px;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .legend-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  #strip-tooltip {
+    position: fixed;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    padding: 8px 12px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text);
+    pointer-events: none;
+    display: none;
+    z-index: 100;
+    border-radius: 2px;
+    line-height: 1.7;
+  }
+
+  /* ── signal divergence scatter ── */
+  #scatter-canvas {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 7;
+  }
+
+  /* ── appeal rate by classification ── */
+  .appeal-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 16px;
+  }
+  .appeal-block {
+    padding: 18px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+  }
+  .appeal-block.ai       { background: var(--ai-dim);        border-color: var(--ai-mid); }
+  .appeal-block.human    { background: var(--human-dim);     border-color: var(--human-mid); }
+  .appeal-block.uncertain{ background: var(--uncertain-dim); border-color: var(--uncertain-mid); }
+
+  .appeal-cls {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+  .appeal-block.ai .appeal-cls       { color: var(--ai); }
+  .appeal-block.human .appeal-cls    { color: var(--human); }
+  .appeal-block.uncertain .appeal-cls{ color: var(--uncertain); }
+
+  .appeal-bar-track {
+    height: 6px;
+    background: var(--surface-2);
+    border-radius: 1px;
+    margin-bottom: 10px;
+    overflow: hidden;
+  }
+  .appeal-bar-fill {
+    height: 100%;
+    border-radius: 1px;
+    transition: width 0.6s ease;
+  }
+  .appeal-block.ai        .appeal-bar-fill { background: var(--ai); }
+  .appeal-block.human     .appeal-bar-fill { background: var(--human); }
+  .appeal-block.uncertain .appeal-bar-fill { background: var(--uncertain); }
+
+  .appeal-stats {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .appeal-rate-num {
+    font-size: 22px;
+    font-weight: 700;
+    display: block;
+    margin-bottom: 2px;
+  }
+  .appeal-block.ai        .appeal-rate-num { color: var(--ai); }
+  .appeal-block.human     .appeal-rate-num { color: var(--human); }
+  .appeal-block.uncertain .appeal-rate-num { color: var(--uncertain); }
+
+  /* ── signal agreement table ── */
+  .agreement-row {
+    display: grid;
+    grid-template-columns: 160px 1fr 80px;
+    gap: 12px;
+    align-items: center;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .agreement-row:last-child { border-bottom: none; }
+  .agreement-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .agreement-track {
+    height: 5px;
+    background: var(--surface-2);
+    border-radius: 1px;
+    overflow: hidden;
+  }
+  .agreement-fill {
+    height: 100%;
+    border-radius: 1px;
+  }
+  .agreement-pct {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    text-align: right;
+    color: var(--text);
+  }
+
+  /* ── recent activity feed ── */
+  .feed-item {
+    display: grid;
+    grid-template-columns: 90px 80px 1fr 80px;
+    gap: 12px;
+    align-items: baseline;
+    padding: 9px 0;
+    border-bottom: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+  .feed-item:last-child { border-bottom: none; }
+  .feed-time   { color: var(--text-dim); }
+  .feed-cls    { font-weight: 600; }
+  .feed-cls.ai       { color: var(--ai); }
+  .feed-cls.human    { color: var(--human); }
+  .feed-cls.uncertain{ color: var(--uncertain); }
+  .feed-cls.appeal   { color: var(--text-muted); }
+  .feed-preview { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .feed-prob { text-align: right; color: var(--text-dim); }
+
+  /* ── loading / error ── */
+  .loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 200px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-dim);
+    letter-spacing: 0.05em;
+  }
+
+  @media (max-width: 700px) {
+    main { padding: 20px 16px 60px; }
+    .stat-row { grid-template-columns: 1fr 1fr; }
+    .appeal-grid { grid-template-columns: 1fr; }
+    .feed-item { grid-template-columns: 70px 70px 1fr; }
+    .feed-prob { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="wordmark">Provenance Guard</span>
+  <span class="stat-label">Detection Dashboard</span>
+  <span class="status-pill" id="status-pill">connecting…</span>
+</header>
+
+<div id="strip-tooltip"></div>
+
+<main>
+  <div id="root"><div class="loading">loading audit log…</div></div>
+</main>
+
+<script>
+// ── fetch log ──────────────────────────────────────────────────────────────
+
+async function fetchLog() {
+  const pill = document.getElementById('status-pill');
+  try {
+    const res = await fetch('/log?limit=500');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    pill.textContent = 'live';
+    pill.classList.add('live');
+    return data.entries || [];
+  } catch (e) {
+    pill.textContent = 'offline — demo data';
+    return DEMO_ENTRIES;
+  }
+}
+
+// ── analytics ─────────────────────────────────────────────────────────────
+
+function analyse(entries) {
+  const submissions = entries.filter(e => e.entry_type === 'submission');
+  const appeals     = entries.filter(e => e.entry_type === 'appeal');
+
+  const total = submissions.length;
+  const counts = { ai: 0, human: 0, uncertain: 0 };
+  submissions.forEach(s => { if (counts[s.classification] !== undefined) counts[s.classification]++; });
+
+  // Appeal rate per classification
+  const appealedIds = new Set(appeals.map(a => a.content_id));
+  const appealCounts = { ai: 0, human: 0, uncertain: 0 };
+  submissions.forEach(s => {
+    if (appealedIds.has(s.content_id)) appealCounts[s.classification]++;
+  });
+
+  // Signal agreement: classify by which signal "agrees" with final verdict
+  // Agreement = both signals on same side of 0.5
+  let bothAgree = 0, disagree = 0;
+  const divergence = [];  // {llm, stylo, cls}
+  submissions.forEach(s => {
+    const llm   = s.signals?.llm_score;
+    const stylo = s.signals?.stylo_score;
+    const prob  = s.ai_probability;
+    if (llm == null || stylo == null) return;
+    const llmSide   = llm   > 0.5 ? 'ai' : 'human';
+    const styloSide = stylo > 0.5 ? 'ai' : 'human';
+    if (llmSide === styloSide) bothAgree++; else disagree++;
+    divergence.push({ llm, stylo, cls: s.classification, prob });
+  });
+
+  // Signal disagreement by classification (extra metric)
+  const disAI  = submissions.filter(s => {
+    const l = s.signals?.llm_score, st = s.signals?.stylo_score;
+    return l != null && st != null && s.classification === 'ai' && Math.abs(l - st) > 0.25;
+  }).length;
+  const disHuman = submissions.filter(s => {
+    const l = s.signals?.llm_score, st = s.signals?.stylo_score;
+    return l != null && st != null && s.classification === 'human' && Math.abs(l - st) > 0.25;
+  }).length;
+  const disUnc = submissions.filter(s => {
+    const l = s.signals?.llm_score, st = s.signals?.stylo_score;
+    return l != null && st != null && s.classification === 'uncertain' && Math.abs(l - st) > 0.25;
+  }).length;
+
+  // Dampened (short-text) count
+  const dampened = submissions.filter(s => s.signals?.stylo_warning).length;
+
+  // Average ai_probability per classification
+  const avgProb = {};
+  ['ai','human','uncertain'].forEach(cls => {
+    const group = submissions.filter(s => s.classification === cls);
+    avgProb[cls] = group.length
+      ? (group.reduce((a,b) => a + b.ai_probability, 0) / group.length).toFixed(3)
+      : '—';
+  });
+
+  return {
+    total, counts, submissions, appeals, appealedIds,
+    appealCounts, bothAgree, disagree, divergence,
+    disAI, disHuman, disUnc, dampened, avgProb,
+    allProbs: submissions.map(s => ({ prob: s.ai_probability, cls: s.classification,
+      preview: s.text_preview || '', ts: s.timestamp })),
+  };
+}
+
+// ── render ─────────────────────────────────────────────────────────────────
+
+function pct(n, d) { return d ? Math.round(100 * n / d) : 0; }
+function fmt(n, d)  { return d ? (100 * n / d).toFixed(1) + '%' : '0.0%'; }
+
+function render(stats) {
+  const { total, counts, submissions, appeals, appealCounts,
+          bothAgree, disagree, divergence, dampened, avgProb, allProbs,
+          disAI, disHuman, disUnc } = stats;
+
+  const root = document.getElementById('root');
+  root.innerHTML = `
+
+  <!-- Stat row -->
+  <div class="stat-row">
+    <div class="stat-card neutral">
+      <div class="stat-label">Total Submissions</div>
+      <div class="stat-number">${total}</div>
+      <div class="stat-sub">${appeals.length} appeal${appeals.length !== 1 ? 's' : ''} filed</div>
+    </div>
+    <div class="stat-card ai">
+      <div class="stat-label">AI-Flagged</div>
+      <div class="stat-number">${counts.ai}</div>
+      <div class="stat-sub">${fmt(counts.ai, total)} of submissions · avg ${avgProb.ai}</div>
+    </div>
+    <div class="stat-card human">
+      <div class="stat-label">Human-Verified</div>
+      <div class="stat-number">${counts.human}</div>
+      <div class="stat-sub">${fmt(counts.human, total)} of submissions · avg ${avgProb.human}</div>
+    </div>
+    <div class="stat-card uncertain">
+      <div class="stat-label">Uncertain</div>
+      <div class="stat-number">${counts.uncertain}</div>
+      <div class="stat-sub">${fmt(counts.uncertain, total)} of submissions · avg ${avgProb.uncertain}</div>
+    </div>
+  </div>
+
+  <!-- Confidence distribution strip -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">Confidence Score Distribution</span>
+      <span class="section-meta">each dot = one submission · hover for details</span>
+    </div>
+    <div class="section-body">
+      <canvas id="strip-canvas"></canvas>
+      <div class="strip-axis">
+        <span>0.00 — confident human</span>
+        <span>0.20</span>
+        <span>0.50</span>
+        <span>0.80</span>
+        <span>1.00 — confident AI</span>
+      </div>
+      <div class="strip-legend">
+        <span class="legend-item"><span class="legend-dot" style="background:var(--human)"></span>human / high</span>
+        <span class="legend-item"><span class="legend-dot" style="background:var(--uncertain)"></span>uncertain</span>
+        <span class="legend-item"><span class="legend-dot" style="background:var(--ai)"></span>ai / high</span>
+        <span class="legend-item"><span class="legend-dot" style="background:#e55; border: 2px solid #e55"></span>appealed</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Appeal rate -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">Appeal Rate by Classification</span>
+      <span class="section-meta">overall ${fmt(appeals.length, total)}</span>
+    </div>
+    <div class="section-body">
+      <div class="appeal-grid">
+        ${['ai','human','uncertain'].map(cls => `
+        <div class="appeal-block ${cls}">
+          <div class="appeal-cls">${cls === 'ai' ? '⚠ AI-flagged' : cls === 'human' ? '✓ Human' : '⟳ Uncertain'}</div>
+          <span class="appeal-rate-num">${fmt(appealCounts[cls], counts[cls])}</span>
+          <div class="appeal-bar-track">
+            <div class="appeal-bar-fill" style="width:${Math.min(100, pct(appealCounts[cls], counts[cls]))}%"></div>
+          </div>
+          <div class="appeal-stats">
+            <span>${appealCounts[cls]} appeal${appealCounts[cls] !== 1 ? 's' : ''}</span>
+            <span>of ${counts[cls]}</span>
+          </div>
+        </div>`).join('')}
+      </div>
+      <p style="margin-top:18px; font-size:12px; color:var(--text-muted); line-height:1.6;">
+        Appeals are a signal about classifier confidence, not accuracy. High appeal rates on
+        AI-flagged content suggest the threshold may be too low, or a genre of legitimate human
+        writing is being systematically flagged. Zero appeals on human-verified content is expected.
+      </p>
+    </div>
+  </div>
+
+  <!-- Signal divergence scatter + agreement -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">Signal Divergence — LLM vs Stylometrics</span>
+      <span class="section-meta">each dot = one submission</span>
+    </div>
+    <div class="section-body">
+      <canvas id="scatter-canvas"></canvas>
+      <div style="margin-top:20px">
+        <div class="agreement-row">
+          <span class="agreement-label">Signals agree</span>
+          <div class="agreement-track"><div class="agreement-fill" style="width:${pct(bothAgree, bothAgree+disagree)}%; background:var(--human)"></div></div>
+          <span class="agreement-pct">${fmt(bothAgree, bothAgree+disagree)}</span>
+        </div>
+        <div class="agreement-row">
+          <span class="agreement-label">Signals disagree</span>
+          <div class="agreement-track"><div class="agreement-fill" style="width:${pct(disagree, bothAgree+disagree)}%; background:var(--ai)"></div></div>
+          <span class="agreement-pct">${fmt(disagree, bothAgree+disagree)}</span>
+        </div>
+        <div class="agreement-row">
+          <span class="agreement-label">Short-text dampened</span>
+          <div class="agreement-track"><div class="agreement-fill" style="width:${pct(dampened, total)}%; background:var(--uncertain)"></div></div>
+          <span class="agreement-pct">${fmt(dampened, total)}</span>
+        </div>
+      </div>
+      <p style="margin-top:16px; font-size:12px; color:var(--text-muted); line-height:1.6;">
+        Dots along the diagonal (LLM ≈ stylometric) indicate strong signal agreement.
+        Dots far from the diagonal — especially in the upper-left and lower-right quadrants —
+        are where the system is relying on one signal to override the other.
+        These are the submissions most worth reviewing.
+      </p>
+    </div>
+  </div>
+
+  <!-- Recent activity -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">Recent Activity</span>
+      <span class="section-meta">last 20 events</span>
+    </div>
+    <div class="section-body" style="padding: 0 22px;">
+      ${renderFeed([...submissions, ...appeals]
+          .sort((a,b) => b.timestamp.localeCompare(a.timestamp))
+          .slice(0, 20))}
+    </div>
+  </div>
+  `;
+
+  // draw canvases
+  drawStrip(allProbs, stats.appealedIds);
+  drawScatter(divergence, stats.appealedIds, submissions);
+}
+
+function renderFeed(events) {
+  return events.map(e => {
+    if (e.entry_type === 'appeal') {
+      return `<div class="feed-item">
+        <span class="feed-time">${fmtTime(e.timestamp)}</span>
+        <span class="feed-cls appeal">APPEAL</span>
+        <span class="feed-preview">${e.creator_reasoning || ''}</span>
+        <span class="feed-prob">—</span>
+      </div>`;
+    }
+    return `<div class="feed-item">
+      <span class="feed-time">${fmtTime(e.timestamp)}</span>
+      <span class="feed-cls ${e.classification}">${e.classification.toUpperCase()}</span>
+      <span class="feed-preview">${e.text_preview || ''}</span>
+      <span class="feed-prob">${e.ai_probability?.toFixed(3) ?? '—'}</span>
+    </div>`;
+  }).join('');
+}
+
+function fmtTime(ts) {
+  const d = new Date(ts);
+  return `${d.toLocaleDateString('en-US',{month:'short',day:'numeric'})} ${d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:false})}`;
+}
+
+// ── canvas: dot strip ──────────────────────────────────────────────────────
+
+const CLS_COLOR = { ai: '#f5a623', human: '#7eb89a', uncertain: '#6b8cae' };
+
+function drawStrip(allProbs, appealedIds) {
+  // Rebuild submission list with id for appeal lookup
+  const canvas = document.getElementById('strip-canvas');
+  if (!canvas) return;
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.offsetWidth, H = canvas.offsetHeight || 100;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  const PAD = 10;
+  const usableW = W - PAD * 2;
+
+  // threshold markers
+  ctx.strokeStyle = '#2a3045';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([3,3]);
+  [0.20, 0.80].forEach(t => {
+    const x = PAD + t * usableW;
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+  });
+  ctx.setLineDash([]);
+
+  // jitter dots vertically so overlapping scores are visible
+  const jitter = () => PAD + Math.random() * (H - PAD * 2);
+
+  // store dot positions for tooltip
+  const dots = allProbs.map(d => {
+    const x = PAD + d.prob * usableW;
+    const y = jitter();
+    return { x, y, ...d };
+  });
+  canvas._dots = dots;
+
+  dots.forEach(d => {
+    const col = CLS_COLOR[d.cls] || '#888';
+    ctx.beginPath();
+    ctx.arc(d.x, d.y, 4.5, 0, Math.PI * 2);
+    ctx.fillStyle = col + '99';
+    ctx.fill();
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+  });
+
+  // tooltip
+  const tooltip = document.getElementById('strip-tooltip');
+  canvas.onmousemove = ev => {
+    const rect = canvas.getBoundingClientRect();
+    const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
+    let hit = null;
+    for (const d of dots) {
+      if (Math.hypot(d.x - mx, d.y - my) < 8) { hit = d; break; }
+    }
+    if (hit) {
+      tooltip.style.display = 'block';
+      tooltip.style.left = (ev.clientX + 14) + 'px';
+      tooltip.style.top  = (ev.clientY - 10) + 'px';
+      tooltip.innerHTML =
+        `<span style="color:${CLS_COLOR[hit.cls]}">${hit.cls.toUpperCase()}</span><br>` +
+        `ai_probability: <b>${hit.prob.toFixed(4)}</b><br>` +
+        `${hit.preview ? hit.preview.slice(0,60) + '…' : '(no preview)'}`;
+    } else {
+      tooltip.style.display = 'none';
+    }
+  };
+  canvas.onmouseleave = () => { tooltip.style.display = 'none'; };
+}
+
+// ── canvas: scatter ────────────────────────────────────────────────────────
+
+function drawScatter(divergence, appealedIds, submissions) {
+  const canvas = document.getElementById('scatter-canvas');
+  if (!canvas) return;
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.offsetWidth;
+  const H = Math.round(W * 7 / 16);
+  canvas.style.height = H + 'px';
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  const PAD = { top: 12, right: 16, bottom: 32, left: 40 };
+  const plotW = W - PAD.left - PAD.right;
+  const plotH = H - PAD.top  - PAD.bottom;
+
+  const toX = v => PAD.left + v * plotW;
+  const toY = v => PAD.top  + (1 - v) * plotH;
+
+  // grid
+  ctx.strokeStyle = '#2a3045';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([2,3]);
+  [0, 0.25, 0.5, 0.75, 1].forEach(v => {
+    // horizontal
+    ctx.beginPath(); ctx.moveTo(PAD.left, toY(v)); ctx.lineTo(PAD.left + plotW, toY(v)); ctx.stroke();
+    // vertical
+    ctx.beginPath(); ctx.moveTo(toX(v), PAD.top); ctx.lineTo(toX(v), PAD.top + plotH); ctx.stroke();
+  });
+  ctx.setLineDash([]);
+
+  // diagonal (perfect agreement line)
+  ctx.strokeStyle = '#3a4055';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(toX(0), toY(0)); ctx.lineTo(toX(1), toY(1)); ctx.stroke();
+
+  // threshold lines
+  ctx.strokeStyle = '#3a4055';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4,4]);
+  ctx.beginPath(); ctx.moveTo(toX(0.5), toY(0)); ctx.lineTo(toX(0.5), toY(1)); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(toX(0), toY(0.5)); ctx.lineTo(toX(1), toY(0.5)); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // dots
+  divergence.forEach(d => {
+    const x = toX(d.llm), y = toY(d.stylo);
+    const col = CLS_COLOR[d.cls] || '#888';
+    ctx.beginPath();
+    ctx.arc(x, y, 4, 0, Math.PI * 2);
+    ctx.fillStyle = col + 'aa';
+    ctx.fill();
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  });
+
+  // axis labels
+  ctx.fillStyle = '#4a5068';
+  ctx.font = `500 10px 'JetBrains Mono', monospace`;
+  ctx.textAlign = 'center';
+  ctx.fillText('LLM Score →', PAD.left + plotW / 2, H - 6);
+  ctx.save();
+  ctx.translate(11, PAD.top + plotH / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillText('Stylo Score →', 0, 0);
+  ctx.restore();
+
+  // tick labels
+  ctx.fillStyle = '#4a5068';
+  ctx.font = `400 9px 'JetBrains Mono', monospace`;
+  [0, 0.5, 1].forEach(v => {
+    ctx.textAlign = 'right';
+    ctx.fillText(v.toFixed(1), PAD.left - 5, toY(v) + 3);
+    ctx.textAlign = 'center';
+    ctx.fillText(v.toFixed(1), toX(v), PAD.top + plotH + 14);
+  });
+}
+
+// ── demo data (used when server is not running) ───────────────────────────
+
+const DEMO_ENTRIES = (function() {
+  const r = (a,b) => +(a + Math.random()*(b-a)).toFixed(4);
+  const id = () => 'demo-' + Math.random().toString(36).slice(2,10);
+  const days = 7;
+  const base = Date.now() - days*86400e3;
+  const entries = [];
+  const profiles = [
+    { cls:'ai',        llm:[0.78,0.98], stylo:[0.60,0.90] },
+    { cls:'human',     llm:[0.02,0.18], stylo:[0.12,0.42] },
+    { cls:'uncertain', llm:[0.30,0.72], stylo:[0.28,0.68] },
+  ];
+  const previews = {
+    ai:        'Artificial intelligence represents a transformative paradigm shift…',
+    human:     'ok so i finally tried that new ramen place and honestly? underwhelming…',
+    uncertain: 'I have been thinking about remote work lately. There are genuine tradeoffs…',
+  };
+  const appealedSet = new Set();
+  for (let i = 0; i < 60; i++) {
+    const p = profiles[Math.floor(Math.random() * 3)];
+    const llm = r(...p.llm), stylo = r(...p.stylo);
+    const prob = +(0.6*llm + 0.4*stylo).toFixed(4);
+    const cls = prob >= 0.80 ? 'ai' : prob <= 0.20 ? 'human' : 'uncertain';
+    const cid = id();
+    const ts = new Date(base + Math.random()*days*86400e3).toISOString();
+    entries.push({
+      entry_type:'submission', content_id:cid, creator_id:'demo-user',
+      timestamp: ts, classification: cls,
+      ai_probability: prob, confidence_level: cls === 'uncertain' ? 'uncertain' : 'high',
+      signals:{ llm_score:llm, stylo_score:stylo,
+        stylo_metrics:{sentence_length_variance:r(1,25),type_token_ratio:r(0.6,0.95),punctuation_density:r(2,18),avg_word_length:r(3.8,7.2)},
+        stylo_warning: Math.random()<0.12 ? 'Text is short (28 words). Score dampened.' : null },
+      label_text:'', text_preview: previews[cls], status:'classified',
+    });
+    if ((cls === 'ai' && Math.random() < 0.45) || (cls === 'uncertain' && Math.random() < 0.12)) {
+      appealedSet.add(cid);
+      entries.push({
+        entry_type:'appeal', appeal_id:id(), content_id:cid,
+        timestamp: new Date(new Date(ts).getTime()+r(5,180)*60000).toISOString(),
+        creator_reasoning:'I wrote this myself from personal experience.',
+        status:'under_review',
+      });
+    }
+  }
+  return entries.sort((a,b) => a.timestamp.localeCompare(b.timestamp));
+})();
+
+// ── boot ───────────────────────────────────────────────────────────────────
+
+(async () => {
+  const entries = await fetchLog();
+  const stats   = analyse(entries);
+  render(stats);
+})();
+</script>
+</body>
+</html>
